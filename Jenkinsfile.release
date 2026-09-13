@@ -43,7 +43,10 @@ pipeline {
         PROJECT  = 'halo'
         APP      = 'halo'
         IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
-        LEDGER   = '/home/joyboy/devops/halo-cd'
+        // ⚠️ 台账目录必须是【容器里】存在的路径。Jenkins 跑在容器里，
+        //    看不到宿主机的 /home/joyboy，直接写那个路径会 Permission denied。
+        //    /var/jenkins_home 是已挂载的卷，对应宿主机 /home/joyboy/devops/jenkins
+        LEDGER   = '/var/jenkins_home/halo-cd'
     }
 
     options {
@@ -193,7 +196,7 @@ pipeline {
 
             回滚方法：重新运行本 job，IMAGE_TAG 选上一个好版本
              （或选第一项"改用 GIT_TAG"，再用 GIT_TAG 选对应版本）——
-              cat ${LEDGER}/last_good_${params.TARGET_ENV}.txt
+              cat ${LEDGER}/last_good_${params.TARGET_ENV}.txt   # 宿主机: /home/joyboy/devops/jenkins/halo-cd/
               cat ${LEDGER}/deployments.log
             """
         }
