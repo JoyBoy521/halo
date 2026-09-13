@@ -40,12 +40,15 @@ pipeline {
         stage('镜像标签') {
             steps {
                 script {
-                    // 当前提交上的 Git tag（没有就是空）
+                    // 当前提交上的 Git tag（没有就是空字符串）
                     def t = sh(script: 'git tag --points-at HEAD || true',
                                returnStdout: true).trim()
 
-                  
-                    env.TAG = t ?: "v${env.BUILD_NUMBER}-$(sh(script: 'date +%Y%m%d', returnStdout: true).trim())"
+                    // 日期必须单独算出来：Groovy 的字符串里不能写 $(命令)，
+                    // 它会把 $( 当成 GString 插值的开头，报 "illegal string body character after dollar sign"
+                    def date = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
+
+                    env.TAG = t ?: "v${env.BUILD_NUMBER}-${date}"
                     echo "本次镜像 tag = ${env.TAG}"
                 }
             }
