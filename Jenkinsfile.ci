@@ -13,6 +13,7 @@ pipeline{
         IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
         GIT_URL  = 'https://github.com/JoyBoy521/halo.git'
         DOCKER_BUILDKIT = "1" 
+        BUILD_ARGS = "--build-arg HTTP_PROXY=http://192.168.3.6:7897 --build-arg HTTPS_PROXY=http://192.168.3.6:7897 --build-arg NO_PROXY=localhost,127.0.0.1,192.168.187.128"
     }
 
     stages{
