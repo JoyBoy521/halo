@@ -33,6 +33,14 @@ pipeline{
             }
         }
 
+        stage('测试') {
+            steps {
+                script {
+                    sh "docker build -t ${IMAGE}:${env.tag} ."
+                    
+                }
+            }
+        }
         stage('构建镜像') {
             steps {
                 script {
@@ -57,7 +65,7 @@ pipeline{
                 script {
                     sh "docker stop ${APP} || true"
                     sh "docker rm ${APP} || true"
-                    sh "docker run -d --name ${APP} -p ${params.PORT}:8080 ${IMAGE}:${env.tag}"
+                    sh "docker run -d --name ${APP} -p ${params.PORT}:8090 -v ${APP}-work:/root/.halo2 ${IMAGE}:${env.tag}"
                 }
             }
 
@@ -71,6 +79,7 @@ pipeline{
         post {
             success {
                 echo "构建成功，镜像标签为：${env.tag}"
+                echo "✅ 部署成功，访问地址 http://192.168.187.128:${params.PORT}"
             }
             failure {
                 sh "docker logout ${REGISTRY}"
