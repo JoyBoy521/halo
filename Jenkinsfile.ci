@@ -45,7 +45,7 @@ pipeline{
         stage('构建镜像') {
             steps {
                 script {
-                    sh "docker build -t ${IMAGE}:${env.tag} ."
+                    sh "docker build -t ${IMAGE}:${env.tag} ${BUILD_ARGS} ."
                 }
             }
         }
