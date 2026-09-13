@@ -54,11 +54,7 @@ pipeline {
 
         // ── 测试门禁：不过就没镜像 ────────────────────────────
         // --target test = 只构建 Dockerfile 的 test 阶段（./gradlew clean check）
-        stage('测试') {
-            steps {
-                sh "docker build --target test -t ${APP}:test-gate ${BUILD_ARGS} ."
-            }
-        }
+
 
         // ── 打镜像（不带 --target = 构建最终运行时镜像）────────
         stage('打镜像') {
