@@ -1,19 +1,3 @@
-# ─────────────────────────────────────────────────────────────
-# Halo 多阶段构建（路线 B：从源码构建）
-#
-# 命令完全照官方 CI（.github/workflows/halo.yaml）来，别自己发明：
-#   测试门禁：./gradlew clean check
-#   正式构建：./gradlew clean downloadPluginPresets build -x check
-#   ⚠️ downloadPluginPresets 必须显式调用！它会从 GitHub Releases / halo.run
-#      下载 8 个预设插件 jar；不写它，打出来的 jar 里就没有预设插件。
-#
-# 环境：Java 21 (temurin) + Node 24 + pnpm 11.17.0（官方 ci 就是这么配的）
-#
-# 基础镜像统一走 Harbor：BuildKit 拉 Docker Hub 时不走 daemon 代理，会直接失败
-# （实测报 auth.docker.io connection refused / DNS 被污染），所以先把
-# eclipse-temurin:21-jdk 和 21-jre 搬进 Harbor，再用下面的 BASE_REGISTRY 引用。
-# ─────────────────────────────────────────────────────────────
-
 ARG BASE_REGISTRY=192.168.187.128:8088/joyboy/base
 ARG NODE_VERSION=24.11.0
 ARG PNPM_VERSION=11.17.0
