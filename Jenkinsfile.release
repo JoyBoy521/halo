@@ -7,47 +7,29 @@
 //
 // CD 不构建任何东西。发布和回滚是同一条路径：
 // 选旧 tag 再发一次，就是回滚。
+//
+// 查可用镜像 tag 的方法（用于填 IMAGE_TAG）：
+//   docker images | grep halo/halo
+//   或打开 Harbor：http://192.168.187.128:8088/harbor/projects/2/repositories/halo
 // ═══════════════════════════════════════════════════════════════
-
-// ★ Active Choices 的 reactiveChoice 要求 script 是 Script 对象，不接受字符串。
-//   所以必须 import 并用 new GroovyScript("脚本", "fallback") 包一层。
-//   GroovyScript 的签名（javap 实测）：GroovyScript(String, String)
-import org.biouno.unochoice.model.GroovyScript
 
 pipeline {
     agent any
 
     parameters {
-        // IMAGE_TAG 的第一项是哨兵值：选它表示"改用下面的 GIT_TAG"
-        // 这样两个下拉框不会打架 —— 只能二选一，行为明确
-        reactiveChoice(
-            name: 'IMAGE_TAG',
-            choiceType: 'PT_SINGLE_SELECT',
-            description: '要部署的镜像 tag（取自 Harbor，最新在前）。选第一项则改用下面的 GIT_TAG',
-            script: new GroovyScript(
-                'def r = ["★ 改用下面的 GIT_TAG ★"]\n' +
-                'try {\n' +
-                '  def url = "http://192.168.187.128:8088/api/v2.0/projects/halo/repositories/halo/artifacts?page_size=50&with_tag=true"\n' +
-                '  def arts = new groovy.json.JsonSlurper().parseText(url.toURL().getText("UTF-8"))\n' +
-                '  def tags = arts.collectMany { it.tags ?: [] }.collect { it.name }\n' +
-                '  if (tags) r = r + tags.sort().reverse()\n' +
-                '} catch (Exception e) {\n' +
-                '  r = r + ("ERROR: " + e.class.simpleName)\n' +
-                '}\n' +
-                'return r\n',
-                ''
-            )
-        )
+        // 要部署的镜像 tag（从 Harbor 抄一个填进来）
+        string(name: 'IMAGE_TAG',
+               defaultValue: 'v13-20260913-299523063',
+               description: '要部署的镜像 tag（Harbor 里必须已存在，可留空则用下面的 GIT_TAG）')
 
-        // 从 Git tag 选（下拉框由 git-parameter 插件拉取）
+        // 或者从 Git tag 下拉框选（需 Harbor 里有同名镜像）
         // ⚠️ tagFilter 是 glob 不是正则：'*' 匹配全部；只写 'v*' 会漏掉不带 v 的 tag
-        // 注意：Git tag 和镜像 tag 是两回事 —— 选了这里，Harbor 里必须有同名镜像
         gitParameter(name: 'GIT_TAG',
                      type: 'PT_TAG',
                      tagFilter: '*',
                      sortMode: 'DESCENDING_SMART',
                      defaultValue: '',
-                     description: '（可选）从 Git tag 选；需先在 IMAGE_TAG 里选第一项「改用 GIT_TAG」')
+                     description: '（可选）从 Git tag 选；与 IMAGE_TAG 二选一')
 
         choice(name: 'TARGET_ENV',
                choices: ['staging', 'prod'],
@@ -76,21 +58,11 @@ pipeline {
         stage('校验镜像') {
             steps {
                 script {
-                    // 两个参数二选一：IMAGE_TAG 选了哨兵 → 用 GIT_TAG，否则用 IMAGE_TAG
-                    if (params.IMAGE_TAG?.startsWith('★')) {
-                        if (!params.GIT_TAG?.trim()) {
-                            error('IMAGE_TAG 选了"改用 GIT_TAG"，但 GIT_TAG 是空的。' +
-                                  '先把 Git tag 推上去：git tag v1.0.0 && git push origin v1.0.0')
-                        }
-                        env.DEPLOY_TAG = params.GIT_TAG.trim()
-                        echo "按 Git tag 部署"
-                    } else {
-                        env.DEPLOY_TAG = params.IMAGE_TAG?.trim()
-                        echo "按 Harbor 镜像 tag 部署"
-                    }
-
+                    // 二选一：IMAGE_TAG 填了就用它，留空则用 GIT_TAG
+                    env.DEPLOY_TAG = params.IMAGE_TAG?.trim() ?: params.GIT_TAG?.trim()
                     if (!env.DEPLOY_TAG) {
-                        error('没取到要部署的版本：Harbor 里可能还没有镜像，先去跑 halo-ci')
+                        error('IMAGE_TAG 和 GIT_TAG 都为空 —— 至少填一个。' +
+                              '查可用镜像 tag：docker images | grep halo/halo')
                     }
                     echo "本次部署版本 = ${env.DEPLOY_TAG}"
                 }
