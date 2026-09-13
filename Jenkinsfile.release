@@ -1,0 +1,169 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'IMAGE_TAG',
+               defaultValue: '',
+               description: '要部署的镜像 tag')
+
+        gitParameter(name: 'GIT_TAG',
+                     type: 'PT_TAG',
+                     tagFilter: 'v*',
+                     sortMode: 'DESCENDING_SMART',
+                     defaultValue: '',
+                     description: '（可选）从 Git tag 选，留空则用 IMAGE_TAG')
+
+        choice(name: 'TARGET_ENV',
+               choices: ['staging', 'prod'],
+               description: '部署到哪个环境')
+    }
+
+    environment {
+        REGISTRY = '192.168.187.128:8088'
+        PROJECT  = 'halo'
+        APP      = 'halo'
+        IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
+        LEDGER   = '/home/joyboy/devops/halo-cd'
+    }
+
+    stages {
+
+        // ── 1. 确定版本 + 校验镜像存在 ─────────────────────────
+        // 镜像不存在就直接停，并把 Harbor 里现有的 tag 列出来，
+        // 免得你去猜"是参数写错了还是镜像真没有"
+        stage('校验镜像') {
+            steps {
+                script {
+                    env.DEPLOY_TAG = params.GIT_TAG ?: params.IMAGE_TAG
+                    if (!env.DEPLOY_TAG?.trim()) {
+                        error('必须填 IMAGE_TAG，或从 GIT_TAG 下拉框选一个')
+                    }
+                    echo "本次部署版本 = ${env.DEPLOY_TAG}"
+                }
+
+                withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+                                                  usernameVariable: 'HARBOR_USER',
+                                                  passwordVariable: 'HARBOR_PASS')]) {
+                    sh '''
+                    echo ${HARBOR_PASS} | docker login ${REGISTRY} -u ${HARBOR_USER} --password-stdin
+
+                    if docker pull ${IMAGE}:${DEPLOY_TAG}; then
+                      echo "镜像存在，继续"
+                    else
+                      echo "Harbor 里没有 ${IMAGE}:${DEPLOY_TAG}，现有 tag："
+                      curl -s -u "$HARBOR_USER:$HARBOR_PASS" \
+                        "http://${REGISTRY}/api/v2.0/projects/${PROJECT}/repositories/${APP}/artifacts?page_size=20&with_tag=true" \
+                        | grep -oE '"name":"[^"]*"' | sort -u | head -20
+                      echo "→ 先去跑 halo-ci 把镜像建出来，或换一个已存在的 tag"
+                      exit 1
+                    fi
+                    '''
+                }
+            }
+        }
+
+        // ── 2. 记录回滚点 ──────────────────────────────────────
+        // 回滚点记在"部署前"。所以某环境第一次发布时是 none，
+        // 想练回滚得先发两个版本
+        stage('记录回滚点') {
+            steps {
+                sh '''
+                mkdir -p ${LEDGER}/backup/${TARGET_ENV}
+
+                CURRENT=$(docker inspect ${APP}-${TARGET_ENV} \
+                          --format "{{index .Config.Image}}" 2>/dev/null | sed 's/.*://') || true
+                CURRENT=${CURRENT:-none}
+                echo "$CURRENT" > ${LEDGER}/last_good_${TARGET_ENV}.txt
+
+                echo "$(date '+%F %T') | 部署前回滚点 | ${TARGET_ENV} | running=${CURRENT} | 即将部署=${DEPLOY_TAG}" \
+                  >> ${LEDGER}/deployments.log
+                echo "回滚点已记录：${TARGET_ENV} 当前跑的是 ${CURRENT}"
+                '''
+            }
+        }
+
+        // ── 3. 人工审批（只有 prod 才需要）────────────────────
+        stage('人工审批') {
+            when { expression { params.TARGET_ENV == 'prod' } }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "确认把 ${env.DEPLOY_TAG} 发布到 PROD（8092）？",
+                          ok: '确认发布',
+                          submitter: 'admin'
+                }
+            }
+        }
+
+        // ── 4. 部署 ────────────────────────────────────────────
+        // 端口：staging=8091 / prod=8092；容器内固定 8090
+        // 数据卷：每个环境独立，否则数据互相污染
+        stage('部署') {
+            steps {
+                script {
+                    env.HOST_PORT = (params.TARGET_ENV == 'prod') ? '8092' : '8091'
+                }
+                sh '''
+                echo "=== 部署 ${DEPLOY_TAG} → ${TARGET_ENV}（宿主机 ${HOST_PORT}）==="
+
+                docker rm -f ${APP}-${TARGET_ENV} 2>/dev/null || true
+
+                docker run -d \
+                  --name ${APP}-${TARGET_ENV} \
+                  -p ${HOST_PORT}:8090 \
+                  -v ${APP}-work-${TARGET_ENV}:/root/.halo2 \
+                  -e APP_ENV=${TARGET_ENV} \
+                  -e APP_VERSION=${DEPLOY_TAG} \
+                  ${IMAGE}:${DEPLOY_TAG}
+                '''
+            }
+        }
+
+        // ── 5. 健康检查 ────────────────────────────────────────
+        // readiness 会把数据库连通性算进去，比"容器 Up"靠谱
+        // Halo 首次启动要跑数据库迁移，给足 3 分钟（36 × 5s）
+        stage('健康检查') {
+            steps {
+                sh '''
+                for i in $(seq 1 36); do
+                  if curl -fsS "http://127.0.0.1:${HOST_PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
+                    echo "${TARGET_ENV} 就绪（第 $i 次检查）"
+                    exit 0
+                  fi
+                  echo "  第 $i 次未就绪，5 秒后重试…"
+                  sleep 5
+                done
+
+                echo "健康检查失败，容器日志尾部："
+                docker logs ${APP}-${TARGET_ENV} --tail 60
+                exit 1
+                '''
+            }
+        }
+
+        // ── 6. 写台账 ──────────────────────────────────────────
+        stage('写台账') {
+            steps {
+                sh '''
+                echo "$(date '+%F %T') | 部署成功 | ${TARGET_ENV} | ${DEPLOY_TAG} | http://192.168.187.128:${HOST_PORT} | build=#${BUILD_NUMBER}" \
+                  >> ${LEDGER}/deployments.log
+                echo "${DEPLOY_TAG}" > ${LEDGER}/current_${TARGET_ENV}.txt
+                echo "台账已更新：${LEDGER}/deployments.log"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ ${env.DEPLOY_TAG} 已发布到 ${params.TARGET_ENV}：http://192.168.187.128:${env.HOST_PORT}"
+        }
+        failure {
+            echo """
+            ❌ 部署失败。
+
+            回滚方法：重新运行本 job，IMAGE_TAG 填上一个好版本 ——
+              cat ${LEDGER}/last_good_${params.TARGET_ENV}.txt
+              cat ${LEDGER}/deployments.log
+            """
+        }
+    }
+}

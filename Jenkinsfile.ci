@@ -26,7 +26,7 @@ pipeline{
                 script {
                     def sha = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     def data = sh(script: "date +%Y%m%d", returnStdout: true).trim()
-                    env.tag = "${data}-${env.BUILD_NUMBER}-${sha}"
+                    env.tag = "v${env.BUILD_NUMBER}-${data}-${sha}"
                     echo "本次镜像标签 = ${env.tag}"
 
                 }
