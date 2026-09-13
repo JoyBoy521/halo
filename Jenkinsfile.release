@@ -20,27 +20,6 @@ pipeline {
     agent any
 
     parameters {
-        // 从 Harbor 实时拉取镜像 tag（项目 halo 是公开的，匿名可读）
-        reactiveChoice(
-            name: 'IMAGE_TAG',
-            choiceType: 'PT_SINGLE_SELECT',
-            description: '要部署的镜像 tag（实时取自 Harbor，最新在前）',
-            script: new GroovyScript(
-                'def r = []\n' +
-                'try {\n' +
-                '  def u = "http://192.168.187.128:8088/api/v2.0/projects/halo/repositories/halo/artifacts?page_size=50&with_tag=true"\n' +
-                '  def arts = new groovy.json.JsonSlurper().parseText(u.toURL().getText("UTF-8"))\n' +
-                '  r = arts.collectMany { it.tags ?: [] }.collect { it.name }.sort().reverse()\n' +
-                '} catch (Exception e) {\n' +
-                '  r = ["ERROR: " + e.class.simpleName + " - " + e.message]\n' +
-                '}\n' +
-                'return r ?: ["(Harbor 里还没有镜像)"]\n',
-                ''
-            )
-        )
-
-        // 或者从 Git tag 下拉框选（需 Harbor 里有同名镜像）
-        // ⚠️ tagFilter 是 glob 不是正则：'*' 匹配全部；只写 'v*' 会漏掉不带 v 的 tag
         gitParameter(name: 'GIT_TAG',
                      type: 'PT_TAG',
                      tagFilter: '*',
