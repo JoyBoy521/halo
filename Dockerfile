@@ -1,7 +1,7 @@
 ARG BASE_REGISTRY=192.168.187.128:8088/joyboy/base
 ARG NODE_VERSION=24.11.0
 ARG PNPM_VERSION=11.17.0
-
+ARG GIT_TAG
 # ── 阶段 0：工具链（JDK 21 + Node 24 + pnpm）────────────────────
 # Gradle 的 ui 模块用的是 node 插件，会调用系统里的 node/pnpm，
 # 所以构建镜像里必须两套工具链都在（这就是 Halo 的"双工具链"）
