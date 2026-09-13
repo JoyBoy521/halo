@@ -1,31 +1,36 @@
 // ═══════════════════════════════════════════════════════════════
-// Halo CD 流水线：选一个已存在的镜像 tag，部署到 staging / prod
+// Halo CD 流水线：选一个 Git tag（或镜像 tag），部署到 staging / prod
 //
 // 与 CI 的分工：
-//   CI（halo-ci）= 拉代码 → 测试 → 打镜像 → 推 Harbor   （产出制品）
-//   CD（halo-cd）= 选 tag  → 部署   → 健康检查 → 台账    （消费制品）
+//   CI（halo-ci）= 拉代码 → 测试 → 打镜像 → 推 Harbor → 部署 dev
+//   CD（halo-cd）= 选版本  → 部署   → 健康检查 → 台账
 //
-// CD 不构建任何东西。发布和回滚是同一条路径：
-// 选旧 tag 再发一次，就是回滚。
+// 版本来源（二选一，GIT_TAG 优先）：
+//   GIT_TAG   —— Git tag 下拉框。前提：Harbor 里有同名镜像
+//                （CI 用 tag 触发构建时会自动产出同名镜像 tag）
+//   IMAGE_TAG —— 只想按镜像 tag 部署时填这个
 //
-// IMAGE_TAG 是"从 Harbor 动态拉取的列表"：
-//   Active Choices 插件的 reactiveChoice 要求 script 是 Script 对象，不接受字符串，
-//   所以必须 import 并用 new GroovyScript("脚本", "fallback") 包一层。
-//   （GroovyScript 的签名用 javap 实测：GroovyScript(String, String)）
+// 发布和回滚是同一条路径：选旧版本再发一次，就是回滚。
 // ═══════════════════════════════════════════════════════════════
-
-import org.biouno.unochoice.model.GroovyScript
 
 pipeline {
     agent any
 
     parameters {
+        // ── 主入口：从 Git tag 选 ──────────────────────────────
+        // ⚠️ tagFilter 是 glob 不是正则：'*' 匹配全部；只写 'v*' 会漏掉不带 v 的 tag
+        // 前提：Harbor 里有同名镜像（即该 tag 曾经触发过 CI 构建）
         gitParameter(name: 'GIT_TAG',
                      type: 'PT_TAG',
                      tagFilter: '*',
                      sortMode: 'DESCENDING_SMART',
                      defaultValue: '',
-                     description: '（可选）从 Git tag 选；与 IMAGE_TAG 二选一')
+                     description: '从 Git tag 选要部署的版本（需 Harbor 里有同名镜像）')
+
+        // ── 备用：直接按镜像 tag 部署 ──────────────────────────
+        string(name: 'IMAGE_TAG',
+               defaultValue: '',
+               description: '（可选）直接填镜像 tag；填了则优先用它，忽略上面的 GIT_TAG')
 
         choice(name: 'TARGET_ENV',
                choices: ['staging', 'prod'],
@@ -54,11 +59,12 @@ pipeline {
         stage('校验镜像') {
             steps {
                 script {
-                    // 二选一：IMAGE_TAG 填了就用它，留空则用 GIT_TAG
+                    // IMAGE_TAG 填了就优先用它；否则用 GIT_TAG
                     env.DEPLOY_TAG = params.IMAGE_TAG?.trim() ?: params.GIT_TAG?.trim()
                     if (!env.DEPLOY_TAG) {
-                        error('IMAGE_TAG 和 GIT_TAG 都为空 —— 至少填一个。' +
-                              '查可用镜像 tag：docker images | grep halo/halo')
+                        error('GIT_TAG 和 IMAGE_TAG 都没选 —— 至少选一个。' +
+                              '如果 GIT_TAG 下拉框是空的，说明仓库还没有 Git tag：' +
+                              'git tag -a v1.0.0 -m "第一个正式版" && git push origin v1.0.0')
                     }
                     echo "本次部署版本 = ${env.DEPLOY_TAG}"
                 }

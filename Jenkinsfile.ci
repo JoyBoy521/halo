@@ -1,88 +1,127 @@
-pipeline{
+// ═══════════════════════════════════════════════════════════════
+// Halo CI 流水线：拉代码 → 测试门禁 → 打镜像 → 推 Harbor → 部署 dev
+//
+// 镜像 tag 的规则（两条路）：
+//   ① 用 Git tag 触发构建（refs/tags/v1.0.0）→ 镜像 tag = v1.0.0
+//      这样 CD 那边选 Git tag 就能直接部署，两边一一对应
+//   ② 普通分支构建 → 镜像 tag = v<构建号>-<日期>-<短SHA>
+//
+// ⚠️ 关于代理：Java/Gradle 不读 HTTP_PROXY 环境变量，
+//    所以代理配在 Dockerfile 的 ENV GRADLE_OPTS 里（不是这里的 BUILD_ARGS）。
+//    BUILD_ARGS 只对 apt/curl/npm 这类"读环境变量"的程序有用。
+// ═══════════════════════════════════════════════════════════════
+
+pipeline {
     agent any
-    
+
     parameters {
-        string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建的分支')
         string(name: 'PORT', defaultValue: '8090', description: '本地验证端口')
     }
-    
+
     environment {
-        REGISTRY = "192.168.187.128:8088"
-        PROJECT  = "halo"
-        APP      = "halo"
-        IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
-        GIT_URL  = 'https://github.com/JoyBoy521/halo.git'
-        DOCKER_BUILDKIT = "1" 
+        REGISTRY        = "192.168.187.128:8088"
+        PROJECT         = "halo"
+        APP             = "halo"
+        IMAGE           = "${REGISTRY}/${PROJECT}/${APP}"
+        DOCKER_BUILDKIT = "1"
+        BUILD_ARGS      = "--build-arg HTTP_PROXY=http://192.168.3.6:7897 --build-arg HTTPS_PROXY=http://192.168.3.6:7897 --build-arg NO_PROXY=localhost,127.0.0.1,192.168.187.128"
     }
 
-    stages{
+    stages {
+
         stage('拉取代码') {
             steps {
                 checkout scm
+                sh 'git log -1 --format="提交: %h  %s"'
             }
         }
+
+        // ── 镜像标签 ───────────────────────────────────────────
+        // Git tag 构建 → 镜像 tag 用 Git tag 名（v1.0.0）
+        // 分支构建     → 镜像 tag 用 v<构建号>-<日期>-<短SHA>
         stage('镜像标签') {
             steps {
                 script {
-                    def sha = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    def data = sh(script: "date +%Y%m%d", returnStdout: true).trim()
-                    env.tag = "v${env.BUILD_NUMBER}-${data}-${sha}"
-                    echo "本次镜像标签 = ${env.tag}"
-
+                    if (env.TAG_NAME) {
+                        env.TAG = env.TAG_NAME
+                        echo "★ tag 构建：镜像 tag = ${env.TAG}（与 Git tag 同名）"
+                    } else {
+                        def sha  = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        def date = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
+                        env.TAG = "v${env.BUILD_NUMBER}-${date}-${sha}"
+                        echo "分支构建：镜像 tag = ${env.TAG}"
+                    }
                 }
             }
         }
 
+        // ── 测试门禁：不过就没镜像 ────────────────────────────
+        // --target test = 只构建 Dockerfile 的 test 阶段（./gradlew clean check）
         stage('测试') {
             steps {
-                script {
-                    sh "docker build --target test -t ${APP}:test-gate ."
-                    
+                sh "docker build --target test -t ${APP}:test-gate ${BUILD_ARGS} ."
+            }
+        }
+
+        // ── 打镜像（不带 --target = 构建最终运行时镜像）────────
+        stage('打镜像') {
+            steps {
+                sh "docker build -t ${IMAGE}:${env.TAG} ${BUILD_ARGS} ."
+                sh "docker images ${IMAGE}:${env.TAG} --format='镜像: {{.Repository}}:{{.Tag}}  {{.Size}}'"
+            }
+        }
+
+        stage('上传Harbor') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+                                                  usernameVariable: 'HARBOR_USER',
+                                                  passwordVariable: 'HARBOR_PASS')]) {
+                    sh 'echo "$HARBOR_PASS" | docker login ' + REGISTRY + ' -u "$HARBOR_USER" --password-stdin'
+                    sh "docker push ${IMAGE}:${env.TAG}"
+                    echo "已推送: ${IMAGE}:${env.TAG}"
                 }
             }
         }
-        stage('构建镜像') {
+
+        // ── 部署 dev + 健康检查 ───────────────────────────────
+        // 容器内端口固定 8090；dev 用 8090，数据卷 halo-work 独立
+        stage('部署dev') {
             steps {
-                script {
-                    sh "docker build -t ${IMAGE}:${env.tag} ."
-                }
+                sh '''
+                docker rm -f ${APP} 2>/dev/null || true
+
+                docker run -d \
+                  --name ${APP} \
+                  -p ${PORT}:8090 \
+                  -v ${APP}-work:/root/.halo2 \
+                  -e APP_ENV=dev \
+                  -e APP_VERSION=${TAG} \
+                  ${IMAGE}:${TAG}
+
+                echo "等待 Halo 就绪（首次启动要跑数据库迁移，最多等 3 分钟）…"
+                for i in $(seq 1 36); do
+                  if curl -fsS "http://127.0.0.1:${PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
+                    echo "dev 就绪：http://192.168.187.128:${PORT}"
+                    exit 0
+                  fi
+                  echo "  第 $i 次未就绪，5 秒后重试…"
+                  sleep 5
+                done
+
+                echo "健康检查失败，容器日志尾部："
+                docker logs ${APP} --tail 60
+                exit 1
+                '''
             }
         }
-        stage('推送镜像') {
-            steps {
-                script {
-                withCredentials([usernamePassword(credentialsId: 'harbor-cred', usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_PASS')]) {
-                    sh "echo ${HARBOR_PASS} | docker login ${REGISTRY} -u ${HARBOR_USER} --password-stdin"
-                    sh "docker push ${IMAGE}:${env.tag}"
-                                                                                                                                                  }
-                        }
+    }
+
+    post {
+        success {
+            echo "✅ CI 完成：${IMAGE}:${env.TAG} 已推 Harbor，dev 已部署（:${PORT}）"
         }
-                        }
-
-
-        stage('部署镜像') {
-            steps {
-                script {
-                    sh "docker stop ${APP} || true"
-                    sh "docker rm ${APP} || true"
-                    sh "docker run -d --name ${APP} -p ${params.PORT}:8090 -v ${APP}-work:/root/.halo2 ${IMAGE}:${env.tag}"
-                }
-            }
-
-
-
-
-        }       
-        
-
-}
-        post {
-            success {
-                echo "构建成功，镜像标签为：${env.tag}"
-                echo "✅ 部署成功，访问地址 http://192.168.187.128:${params.PORT}"
-            }
-            failure {
-                sh "docker logout ${REGISTRY}"
-            }
+        failure {
+            echo "❌ CI 失败 —— 看上面哪个 stage 是红的"
         }
+    }
 }
