@@ -45,7 +45,7 @@ pipeline {
                         echo "★ tag 构建：镜像 tag = ${env.TAG}（与 Git tag 同名）"
                     } else {
                         def date = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
-                        env.TAG = "${date}-u${env.BUILD_NUMBER}"
+                        env.TAG = "${date}u${env.BUILD_NUMBER}"
                         echo "分支构建：镜像 tag = ${env.TAG}"
                     }
                 }
