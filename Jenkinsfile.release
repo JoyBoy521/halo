@@ -38,6 +38,7 @@ pipeline {
     }
 
     environment {
+        HOST_IP  = '192.168.187.128'
         REGISTRY = '192.168.187.128:8088'
         PROJECT  = 'halo'
         APP      = 'halo'
@@ -154,7 +155,7 @@ pipeline {
             steps {
                 sh '''
                 for i in $(seq 1 36); do
-                  if curl -fsS "http://127.0.0.1:${HOST_PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
+                  if curl -fsS "http://${HOST_IP}:${HOST_PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
                     echo "${TARGET_ENV} 就绪（第 $i 次检查）"
                     exit 0
                   fi
@@ -173,7 +174,7 @@ pipeline {
         stage('写台账') {
             steps {
                 sh '''
-                echo "$(date '+%F %T') | 部署成功 | ${TARGET_ENV} | ${DEPLOY_TAG} | http://192.168.187.128:${HOST_PORT} | build=#${BUILD_NUMBER}" \
+                echo "$(date '+%F %T') | 部署成功 | ${TARGET_ENV} | ${DEPLOY_TAG} | http://${HOST_IP}:${HOST_PORT} | build=#${BUILD_NUMBER}" \
                   >> ${LEDGER}/deployments.log
                 echo "${DEPLOY_TAG}" > ${LEDGER}/current_${TARGET_ENV}.txt
                 echo "台账已更新：${LEDGER}/deployments.log"
@@ -184,7 +185,7 @@ pipeline {
 
     post {
         success {
-            echo "✅ ${env.DEPLOY_TAG} 已发布到 ${params.TARGET_ENV}：http://192.168.187.128:${env.HOST_PORT}"
+            echo "✅ ${env.DEPLOY_TAG} 已发布到 ${params.TARGET_ENV}：http://${HOST_IP}:${env.HOST_PORT}"
         }
         failure {
             echo """

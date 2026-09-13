@@ -19,6 +19,7 @@ pipeline {
     }
 
     environment {
+        HOST_IP         = "192.168.187.128"
         REGISTRY        = "192.168.187.128:8088"
         PROJECT         = "halo"
         APP             = "halo"
@@ -36,9 +37,6 @@ pipeline {
             }
         }
 
-        // ── 镜像标签 ───────────────────────────────────────────
-        // Git tag 构建 → 镜像 tag 用 Git tag 名（v1.0.0）
-        // 分支构建     → 镜像 tag 用 v<构建号>-<日期>-<短SHA>
         stage('镜像标签') {
             steps {
                 script {
@@ -46,9 +44,8 @@ pipeline {
                         env.TAG = env.TAG_NAME
                         echo "★ tag 构建：镜像 tag = ${env.TAG}（与 Git tag 同名）"
                     } else {
-                        def sha  = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                         def date = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
-                        env.TAG = "v${env.BUILD_NUMBER}-${date}-${sha}"
+                        env.TAG = "${date}-u${env.BUILD_NUMBER}"
                         echo "分支构建：镜像 tag = ${env.TAG}"
                     }
                 }
@@ -100,8 +97,8 @@ pipeline {
 
                 echo "等待 Halo 就绪（首次启动要跑数据库迁移，最多等 3 分钟）…"
                 for i in $(seq 1 36); do
-                  if curl -fsS "http://127.0.0.1:${PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
-                    echo "dev 就绪：http://192.168.187.128:${PORT}"
+                  if curl -fsS "http://${HOST_IP}:${PORT}/actuator/health/readiness" | grep -q '"status":"UP"'; then
+                    echo "dev 就绪：http://${HOST_IP}:${PORT}"
                     exit 0
                   fi
                   echo "  第 $i 次未就绪，5 秒后重试…"
