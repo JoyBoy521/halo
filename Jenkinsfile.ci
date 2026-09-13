@@ -37,32 +37,16 @@ pipeline {
             }
         }
 
-        // 判断"这次构建的提交上有没有 Git tag"：
-        //   有 → 镜像 tag 用那个 Git tag 名（发布版）
-        //   无 → 镜像 tag 用 v<构建号>-<日期>-<短SHA>（日常构建）
-        //
-        // 为什么不用 Jenkins 的 env.TAG_NAME：
-        //   同一个 job 同时配了 */main 和 refs/tags/* 时，Jenkins 会切到
-        //   origin/main 分支（构建日志里能看到 "Checking out Revision xxx (origin/main, refs/tags/xxx)"），
-        //   于是 TAG_NAME 拿不到值。所以直接问 git："当前提交上挂了哪些 tag？"
         stage('镜像标签') {
             steps {
                 script {
-                    def tags = sh(script: 'git tag --points-at HEAD || true',
-                                  returnStdout: true).trim().readLines().findAll { it }
+                    // 当前提交上的 Git tag（没有就是空）
+                    def t = sh(script: 'git tag --points-at HEAD || true',
+                               returnStdout: true).trim()
 
-                    if (tags.size() == 1) {
-                        env.TAG = tags[0]
-                        echo "发布构建：当前提交上有 Git tag -> 镜像 tag = ${env.TAG}"
-                    } else if (tags.size() > 1) {
-                        error("当前提交上有多个 tag：${tags.join(', ')}，无法确定用哪个做镜像 tag。" +
-                              "请删掉多余的：git tag -d <tag名> && git push origin :refs/tags/<tag名>")
-                    } else {
-                        def sha  = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                        def date = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
-                        env.TAG = "v${env.BUILD_NUMBER}-${date}-${sha}"
-                        echo "日常构建：当前提交上没有 tag -> 镜像 tag = ${env.TAG}"
-                    }
+                  
+                    env.TAG = t ?: "v${env.BUILD_NUMBER}-$(sh(script: 'date +%Y%m%d', returnStdout: true).trim())"
+                    echo "本次镜像 tag = ${env.TAG}"
                 }
             }
         }
