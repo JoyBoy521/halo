@@ -13,7 +13,6 @@ pipeline{
         IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
         GIT_URL  = 'https://github.com/JoyBoy521/halo.git'
         DOCKER_BUILDKIT = "1" 
-        BUILD_ARGS = "--build-arg HTTP_PROXY=http://192.168.3.6:7897 --build-arg HTTPS_PROXY=http://192.168.3.6:7897 --build-arg NO_PROXY=localhost,127.0.0.1,192.168.187.128"
     }
 
     stages{
@@ -37,7 +36,7 @@ pipeline{
         stage('测试') {
             steps {
                 script {
-                    sh "docker build --target test -t ${APP}:test-gate ${BUILD_ARGS} ."
+                    sh "docker build --target test -t ${APP}:test-gate ."
                     
                 }
             }
@@ -45,7 +44,7 @@ pipeline{
         stage('构建镜像') {
             steps {
                 script {
-                    sh "docker build -t ${IMAGE}:${env.tag} ${BUILD_ARGS} ."
+                    sh "docker build -t ${IMAGE}:${env.tag} ."
                 }
             }
         }

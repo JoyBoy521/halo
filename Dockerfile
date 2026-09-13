@@ -43,6 +43,9 @@ RUN apt-get update \
 ENV npm_config_store_dir=/pnpm-store
 ENV GRADLE_USER_HOME=/root/.gradle
 ENV CI=true
+# ★ Java/Gradle 不读 HTTP_PROXY 环境变量，必须用 JVM 系统属性指定代理。
+#   不写这行，:application:downloadPluginPresets 会直连 github.com 并超时/被重置。
+ENV GRADLE_OPTS="-Dhttps.proxyHost=192.168.3.6 -Dhttps.proxyPort=7897 -Dhttp.proxyHost=192.168.3.6 -Dhttp.proxyPort=7897 -Dhttp.nonProxyHosts=localhost|127.0.0.1|192.168.187.128"
 
 WORKDIR /src
 
