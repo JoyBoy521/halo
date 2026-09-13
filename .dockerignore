@@ -1,3 +1,24 @@
-ui
+# ⚠️ 千万不要排除 .git！
+# Halo 的构建用了 git.properties 插件 + git rev-parse（application/build.gradle 里能看到），
+# 没有 .git 会直接构建失败（deepseek-harness 那轮就栽在这）。
+
+.git/objects/pack/*.pack.tmp
 .github
-.git
+
+# 依赖与产物：容器里会重新装/重新构建
+node_modules
+**/node_modules
+**/build
+**/dist
+.gradle
+ui/build
+application/build
+api/build
+platform/build
+
+# 编辑器与本地垃圾
+.idea
+.vscode
+*.iml
+*.log
+.DS_Store

@@ -1,0 +1,79 @@
+pipeline{
+    agent any
+    
+    parameters {
+        string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建的分支')
+        string(name: 'PORT', defaultValue: '8090', description: '本地验证端口')
+    }
+    
+    environment {
+        REGISTRY = "192.168.187.128:8088"
+        PROJECT  = "halo"
+        APP      = "halo"
+        IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
+        GIT_URL  = 'https://github.com/JoyBoy521/halo.git'
+
+    }
+
+    stages{
+        stage('拉取代码') {
+            steps {
+                checkout scm
+            }
+        }
+        stage('镜像标签') {
+            steps {
+                script {
+                    def sha = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    def data = sh(script: "date +%Y%m%d", returnStdout: true).trim()
+                    env.tag = "${data}-${env.BUILD_NUMBER}-${sha}"
+                    echo "本次镜像标签 = ${env.tag}"
+
+                }
+            }
+        }
+
+        stage('构建镜像') {
+            steps {
+                script {
+                    sh "docker build -t ${IMAGE}:${env.tag} ."
+                }
+            }
+        }
+        stage('推送镜像') {
+            steps {
+                script {
+                withCredentials([usernamePassword(credentialsId: 'harbor-cred', usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_PASS')]) {
+                    sh "echo ${HARBOR_PASS} | docker login ${REGISTRY} -u ${HARBOR_USER} --password-stdin"
+                    sh "docker push ${IMAGE}:${env.tag}"
+                                                                                                                                                  }
+                        }
+        }
+                        }
+
+
+        stage('部署镜像') {
+            steps {
+                script {
+                    sh "docker stop ${APP} || true"
+                    sh "docker rm ${APP} || true"
+                    sh "docker run -d --name ${APP} -p ${PORT}:8080 ${IMAGE}:${env.tag}"
+                }
+            }
+
+
+
+
+        }       
+        
+
+}
+        post {
+            success {
+                echo "构建成功，镜像标签为：${env.tag}"
+            }
+            failure {
+                sh "docker logout ${REGISTRY}"
+            }
+        }
+}
