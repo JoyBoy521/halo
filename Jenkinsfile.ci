@@ -12,7 +12,7 @@ pipeline{
         APP      = "halo"
         IMAGE    = "${REGISTRY}/${PROJECT}/${APP}"
         GIT_URL  = 'https://github.com/JoyBoy521/halo.git'
-
+        DOCKER_BUILDKIT = "1" 
     }
 
     stages{
@@ -57,7 +57,7 @@ pipeline{
                 script {
                     sh "docker stop ${APP} || true"
                     sh "docker rm ${APP} || true"
-                    sh "docker run -d --name ${APP} -p ${PORT}:8080 ${IMAGE}:${env.tag}"
+                    sh "docker run -d --name ${APP} -p ${params.PORT}:8080 ${IMAGE}:${env.tag}"
                 }
             }
 
